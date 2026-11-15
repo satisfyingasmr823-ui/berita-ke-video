@@ -41,6 +41,21 @@ Mode ini paling andal karena pengambilan link berjalan dari komputermu sendiri.
 
 Rekaman hanya bisa dibuat di Chrome atau Edge.
 
+## Mengunggah ke Facebook dan YouTube
+
+Facebook paling andal dengan MP4 (video H.264, audio AAC). Jika browser merekam WebM,
+suara bisa hilang setelah diunggah. Aplikasi akan memberi tahu jika formatnya WebM.
+
+Konversi dengan FFmpeg (satu perintah):
+
+    ffmpeg -i video-berita.webm -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart video-berita.mp4
+
+Tanpa FFmpeg, buka file WebM di HandBrake lalu pilih preset **Fast 1080p30**, dan pastikan
+audio di-encode sebagai AAC.
+
+Setelah konversi, putar MP4 di pemutar video untuk memastikan suara narasi terdengar sebelum
+diunggah.
+
 ## Catatan hak cipta
 
 - Musik latar dibuat oleh kode di halaman ini, tidak memakai file audio pihak lain.
