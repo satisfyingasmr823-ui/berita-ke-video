@@ -266,12 +266,33 @@ async function searchImages(q, n){
   }catch(e){ return []; }
 }
 
+// Cari wajah terbesar di gambar; titik tengahnya menjadi pusat crop.
+// Jika browser tidak punya FaceDetector, fokus default di sepertiga atas.
+async function detectFocus(img){
+  img.focus = { x: 0.5, y: 0.35 };
+  if(!('FaceDetector' in window)) return img;
+  try{
+    const fd = new FaceDetector({ fastMode: true, maxDetectedFaces: 5 });
+    const faces = await fd.detect(img);
+    if(faces.length){
+      const big = faces.reduce((a, b) =>
+        (b.boundingBox.width * b.boundingBox.height > a.boundingBox.width * a.boundingBox.height ? b : a));
+      const bb = big.boundingBox;
+      img.focus = {
+        x: (bb.x + bb.width / 2) / img.naturalWidth,
+        y: (bb.y + bb.height / 2) / img.naturalHeight
+      };
+    }
+  }catch(e){ /* tetap pakai fokus default */ }
+  return img;
+}
+
 function loadImg(src, allowCors){
   return new Promise(res => {
     const i = new Image();
     const useCors = allowCors !== false;
     if(useCors) i.crossOrigin = 'anonymous';
-    i.onload = () => res(i);
+    i.onload = () => detectFocus(i).then(() => res(i));
     i.onerror = () => {
       if(useCors) loadImg(src, false).then(res);
       else res(null);
@@ -492,7 +513,12 @@ function drawSlide(idx, q, alpha, hl){
     const iw = s.img.naturalWidth, ih = s.img.naturalHeight;
     const base = Math.max(W / iw, H / ih) * (1 + 0.08 * q);
     const w = iw * base, h = ih * base;
-    ctx.drawImage(s.img, (W - w) / 2, (H - h) / 2, w, h);
+    const f = s.img.focus || { x: 0.5, y: 0.35 };
+    let dx = W / 2 - f.x * w;
+    let dy = H / 2 - f.y * h;
+    dx = Math.min(0, Math.max(W - w, dx));
+    dy = Math.min(0, Math.max(H - h, dy));
+    ctx.drawImage(s.img, dx, dy, w, h);
   } else {
     const g = ctx.createLinearGradient(0, 0, W, H);
     g.addColorStop(0, '#1e1b4b');
@@ -753,6 +779,18 @@ function pickVoice(){
   return list.find(v => FEMALE_RE.test(v.name)) || list.find(v => !MALE_RE.test(v.name)) || list[0];
 }
 
+// Jika suara pria/wanita asli tidak terpasang, nada diturunkan/dinaikkan
+// agar tetap terdengar berbeda.
+function voiceSettings(){
+  const sel = $('voice').value;
+  const v = pickVoice();
+  const name = v ? v.name : '';
+  let pitch = 0.95;
+  if(sel === 'male') pitch = MALE_RE.test(name) ? 0.9 : 0.72;
+  else if(sel === 'female') pitch = FEMALE_RE.test(name) ? 1.0 : 1.22;
+  return { voice: v, pitch };
+}
+
 fillVoices();
 if('onvoiceschanged' in speechSynthesis) speechSynthesis.onvoiceschanged = fillVoices;
 
@@ -795,9 +833,9 @@ function say(i){
   const u = new SpeechSynthesisUtterance(s.say);
   u.lang = 'id-ID';
   u.rate = s.win ? Math.min(1.5, Math.max(0.9, (s.say.length / 14) / s.win)) : 0.95;
-  u.pitch = 0.95;
-  const v = pickVoice();
-  if(v) u.voice = v;
+  const vs = voiceSettings();
+  u.pitch = vs.pitch;
+  if(vs.voice) u.voice = vs.voice;
   u.onboundary = e => {
     if(e.name && e.name !== 'word') return;
     boundaryHit = true;
