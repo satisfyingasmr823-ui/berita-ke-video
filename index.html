@@ -123,6 +123,7 @@
         <option value="berita">Berita (serius)</option>
         <option value="bola">Bola (stadion)</option>
         <option value="santai">Santai (ambient)</option>
+        <option value="custom">File musik saya</option>
         <option value="none">Tanpa musik</option>
       </select>
     </div>
@@ -154,6 +155,7 @@
   <h3 id="ttl"></h3>
   <ol id="scriptList"></ol>
   <input type="file" id="imgFile" accept="image/*" style="display:none">
+  <input type="file" id="musicFile" accept="audio/*" style="display:none">
 </section>
 
 </div>
@@ -620,6 +622,8 @@ function ensureAudio(){
 function startMusic(){
   ensureAudio();
   if(!actx) return;
+  if($('musicStyle').value === 'custom'){ startCustom(); return; }
+  musicScale = 1;
   const t = actx.currentTime;
   musicGain = actx.createGain();
   musicGain.gain.setValueAtTime(0, t);
@@ -719,8 +723,31 @@ function startMusic(){
   }, st.step);
 }
 
+let customMusic = null;
+let musicScale = 1;
+
 function setMusic(level){
-  if(actx && musicGain) musicGain.gain.setTargetAtTime(level, actx.currentTime, 0.3);
+  if(actx && musicGain) musicGain.gain.setTargetAtTime(level * musicScale, actx.currentTime, 0.3);
+}
+
+function startCustom(){
+  if(!customMusic){
+    msg('Pilih file musik terlebih dahulu.');
+    $('musicFile').click();
+    return;
+  }
+  musicScale = 4.5;
+  const t = actx.currentTime;
+  musicGain = actx.createGain();
+  musicGain.gain.setValueAtTime(0, t);
+  musicGain.gain.linearRampToValueAtTime(0.08 * musicScale, t + 2);
+  musicGain.connect(actx.destination);
+  const src = actx.createBufferSource();
+  src.buffer = customMusic;
+  src.loop = true;
+  src.connect(musicGain);
+  src.start();
+  musicNodes = [src];
 }
 
 function stopMusic(){
@@ -786,7 +813,7 @@ function voiceSettings(){
   const v = pickVoice();
   const name = v ? v.name : '';
   let pitch = 0.95;
-  if(sel === 'male') pitch = MALE_RE.test(name) ? 0.9 : 0.72;
+  if(sel === 'male') pitch = MALE_RE.test(name) ? 0.9 : 0.6;
   else if(sel === 'female') pitch = FEMALE_RE.test(name) ? 1.0 : 1.22;
   return { voice: v, pitch };
 }
@@ -1037,6 +1064,23 @@ async function oneClick(){
   msg('Video dibuat, merekam dan mengunduh otomatis...');
   await startPlayback(true, true);
 }
+
+$('musicStyle').onchange = () => {
+  if($('musicStyle').value === 'custom' && !customMusic) $('musicFile').click();
+};
+$('musicFile').onchange = async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  try{
+    ensureAudio();
+    customMusic = await actx.decodeAudioData(await f.arrayBuffer());
+    msg('Musik "' + f.name + '" siap dipakai.');
+  }catch(err){
+    customMusic = null;
+    msg('File musik tidak bisa dibaca. Gunakan MP3, WAV, atau M4A.');
+  }
+};
 
 $('oneBtn').onclick = oneClick;
 $('dlBtn').onclick = () => { if(lastBlob) downloadBlob(lastBlob, lastName); };
