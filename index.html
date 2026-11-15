@@ -46,6 +46,7 @@
       </select>
     </label>
     <button id="autoBtn">Buat Video Otomatis</button>
+    <button id="oneBtn" style="background:#16a34a">⬇ Buat & Unduh Otomatis</button>
   </div>
   <details>
     <summary>Teks berita (terisi otomatis dari link, bisa diedit atau ditempel manual)</summary>
@@ -84,6 +85,7 @@ function brandName(){ return $('brand').value.trim() || 'Berita Hari Ini'; }
 
 function setBusy(b){
   $('autoBtn').disabled = b;
+  $('oneBtn').disabled = b;
   $('playBtn').disabled = b || !slides.length;
   $('recBtn').disabled = b || !slides.length;
   $('stopBtn').disabled = !b;
@@ -677,16 +679,28 @@ function say(i){
   }
 }
 
-async function startPlayback(record){
+function fileBaseName(){
+  const base = (title || 'video-berita')
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+    .trim();
+  return base || 'video-berita';
+}
+
+async function startPlayback(record, reuse){
   if(!slides.length || playing) return;
   const musicOn = $('musicStyle').value !== 'none';
   if(musicOn) ensureAudio();
   if(record){
-    try{
-      displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, preferCurrentTab: true });
-    }catch(e){
-      msg('Rekaman dibatalkan.');
-      return;
+    if(!reuse || !displayStream){
+      try{
+        displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, preferCurrentTab: true });
+      }catch(e){
+        msg('Rekaman dibatalkan.');
+        return;
+      }
     }
     const aud = displayStream.getAudioTracks();
     if(!aud.length) msg('Peringatan: audio tab tidak dibagikan, video akan tanpa suara.');
@@ -700,7 +714,7 @@ async function startPlayback(record){
     recorder.onstop = () => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob(chunks, { type: mime.split(';')[0] }));
-      a.download = 'video-berita.' + recExt;
+      a.download = fileBaseName() + '.' + recExt;
       a.click();
       if(displayStream) displayStream.getTracks().forEach(t => t.stop());
       displayStream = null;
@@ -820,6 +834,26 @@ $('imgFile').onchange = e => {
   pendingSlide = -1;
 };
 
+async function oneClick(){
+  if(playing) return;
+  // Izin berbagi layar harus diminta langsung saat klik, sebelum proses lain.
+  try{
+    displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, preferCurrentTab: true });
+  }catch(e){
+    msg('Pilih tab ini di jendela berbagi agar video bisa diunduh otomatis.');
+    return;
+  }
+  slides = [];
+  await autoMake();
+  if(!slides.length){
+    if(displayStream){ displayStream.getTracks().forEach(t => t.stop()); displayStream = null; }
+    return;
+  }
+  msg('Video dibuat, merekam dan mengunduh otomatis...');
+  await startPlayback(true, true);
+}
+
+$('oneBtn').onclick = oneClick;
 $('fetchBtn').onclick = fetchFromLink;
 $('autoBtn').onclick = autoMake;
 $('playBtn').onclick = () => startPlayback(false);
