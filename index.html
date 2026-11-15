@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Berita ke Video Vertikal (Reels & Shorts)</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:900px;margin:auto;padding:20px;background:#f5f6fa;color:#222}
+  h2{margin-top:0}
+  .card{background:#fff;border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 1px 4px #0001}
+  input,textarea{width:100%;padding:10px;box-sizing:border-box;border:1px solid #ccc;border-radius:8px;font-size:15px}
+  button{padding:10px 16px;border:0;border-radius:8px;background:#4f46e5;color:#fff;font-size:15px;cursor:pointer;margin-top:8px}
+  button:disabled{background:#aaa;cursor:not-allowed}
+  canvas{display:block;margin:auto;height:min(80vh,640px);aspect-ratio:9/16;width:auto;border-radius:12px;background:#000}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .status{font-size:14px;color:#555;margin-top:8px;min-height:20px}
+  details{margin-top:10px}
+  summary{cursor:pointer;color:#4f46e5}
+  .tip{font-size:13px;color:#777;margin-top:8px}
+</style>
+</head>
+<body>
+<h2>🎬 Berita ke Video Vertikal</h2>
+
+<div class="card">
+  <label><b>Link berita</b></label>
+  <div class="row">
+    <input id="url" placeholder="https://contoh.com/berita..." style="flex:1">
+    <button id="fetchBtn">Ambil Isi dari Link</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <input id="brand" value="Berita Hari Ini" placeholder="Nama channel" style="flex:1">
+    <input id="count" type="number" value="4" min="2" max="8" style="width:90px" title="Jumlah poin">
+    <select id="format" style="padding:8px;border-radius:8px;border:1px solid #ccc">
+      <option value="bebas" selected>Format bebas</option>
+      <option value="fixed40">Format 40 detik</option>
+    </select>
+  </div>
+  <div class="row" style="margin-top:4px">
+    <label>Musik latar:
+      <select id="musicStyle" style="padding:8px;border-radius:8px;border:1px solid #ccc">
+        <option value="energik" selected>Energik</option>
+        <option value="berita">Berita (serius)</option>
+        <option value="santai">Santai (ambient)</option>
+        <option value="none">Tanpa musik</option>
+      </select>
+    </label>
+    <button id="autoBtn">Buat Video Otomatis</button>
+  </div>
+  <details>
+    <summary>Teks berita (terisi otomatis dari link, bisa diedit atau ditempel manual)</summary>
+    <input id="title" placeholder="Judul (opsional)" style="margin-top:8px">
+    <textarea id="manual" rows="8" placeholder="Tempel isi berita di sini..." style="margin-top:8px"></textarea>
+  </details>
+  <div class="status" id="status"></div>
+</div>
+
+<div class="card">
+  <canvas id="cv"></canvas>
+  <div class="row" style="margin-top:10px">
+    <button id="playBtn" disabled>▶ Putar Pratinjau</button>
+    <button id="recBtn" disabled>⏺ Rekam & Unduh</button>
+    <button id="stopBtn" disabled>■ Berhenti</button>
+  </div>
+  <div class="tip">Format 9:16 (1080×1920) untuk Facebook Reels dan YouTube Shorts. Untuk merekam suara: saat diminta, pilih tab ini dan centang "Bagikan audio tab".</div>
+  <input type="file" id="imgFile" accept="image/*" style="display:none">
+  <h3 id="ttl"></h3>
+  <ol id="scriptList"></ol>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d');
+const W = 1080, H = 1920;
+cv.width = W; cv.height = H;
+
+let slides = [], title = '', sourceName = '', playing = false;
+let fetchedImgs = [], fetchedFrom = '';
+let curIdx = 0, slideStart = 0, rafId = 0, recorder = null, chunks = [], displayStream = null, recExt = 'webm';
+let capIdx = 0, boundaryHit = false;
+
+function msg(t){ $('status').textContent = t; }
+function brandName(){ return $('brand').value.trim() || 'Berita Hari Ini'; }
+
+function setBusy(b){
+  $('autoBtn').disabled = b;
+  $('playBtn').disabled = b || !slides.length;
+  $('recBtn').disabled = b || !slides.length;
+  $('stopBtn').disabled = !b;
+}
+
+/* ---------- Ambil data dari link ---------- */
+
+function proxies(u){
+  return [
+    'https://corsproxy.io/?' + encodeURIComponent(u),
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+    'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u)
+  ];
+}
+
+async function getHtml(u){
+  let lastErr = '';
+  const sources = ['http://127.0.0.1:8000/fetch?url=' + encodeURIComponent(u), ...proxies(u)];
+  for(const p of sources){
+    try{
+      const r = await fetch(p);
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.text();
+    }catch(e){ lastErr = e.message; }
+  }
+  throw new Error(lastErr || 'semua proxy gagal');
+}
+
+function abs(src, base){
+  try{ return new URL(src, base).href; }catch(e){ return null; }
+}
+
+function hostOf(u){
+  try{ return new URL(u).hostname.replace(/^www\./, ''); }catch(e){ return ''; }
+}
+
+function extract(html, base){
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const meta = p => doc.querySelector(`meta[property="${p}"],meta[name="${p}"]`)?.content;
+  const t = meta('og:title') || doc.title || 'Berita';
+  const ogImg = meta('og:image');
+  doc.querySelectorAll('script,style,nav,footer,header,aside,form,noscript').forEach(e => e.remove());
+  const root = doc.querySelector('article') || doc.body;
+  let paras = [...root.querySelectorAll('p')]
+    .map(p => p.textContent.trim().replace(/\s+/g, ' '))
+    .filter(x => x.length > 60);
+  if(!paras.length){
+    paras = [...doc.querySelectorAll('p')]
+      .map(p => p.textContent.trim().replace(/\s+/g, ' '))
+      .filter(x => x.length > 40);
+  }
+  const imgs = [];
+  if(ogImg) imgs.push(abs(ogImg, base));
+  root.querySelectorAll('img').forEach(im => {
+    const s = im.getAttribute('src') || im.dataset.src;
+    if(!s || /\.svg|logo|icon|avatar/i.test(s)) return;
+    const a = abs(s, base);
+    if(a && !imgs.includes(a)) imgs.push(a);
+  });
+  return { title: t, paras, imgs: imgs.filter(Boolean).slice(0, 6) };
+}
+
+function keywords(text){
+  const stop = new Set(['yang','dan','dari','untuk','dengan','ini','itu','pada','dalam','akan','telah','juga','dapat','tersebut','oleh','saat','sudah','ada','the','and','for','with']);
+  return (text || '').toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !stop.has(w))
+    .slice(0, 3)
+    .join(' ');
+}
+
+async function searchImages(q, n){
+  if(!q) return [];
+  const url = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=' +
+    encodeURIComponent(q) + '&gsrnamespace=6&gsrlimit=' + n +
+    '&prop=imageinfo&iiprop=url&iiurlwidth=1280&format=json&origin=*';
+  try{
+    const r = await fetch(url);
+    const j = await r.json();
+    return Object.values(j.query?.pages || {}).map(p => p.imageinfo?.[0]?.thumburl).filter(Boolean);
+  }catch(e){ return []; }
+}
+
+function loadImg(src, allowCors){
+  return new Promise(res => {
+    const i = new Image();
+    const useCors = allowCors !== false;
+    if(useCors) i.crossOrigin = 'anonymous';
+    i.onload = () => res(i);
+    i.onerror = () => {
+      if(useCors) loadImg(src, false).then(res);
+      else res(null);
+    };
+    i.src = src;
+    setTimeout(() => res(null), 6000);
+  });
+}
+
+async function webImage(q){
+  const urls = await searchImages(q, 3);
+  return urls.length ? loadImg(urls[0]) : null;
+}
+
+/* ---------- Susun slide ---------- */
+
+// Ambil teks dan gambar dari link, lalu isi kotak teks dan simpan gambarnya.
+async function fetchFromLink(){
+  const u = $('url').value.trim();
+  if(!u){ msg('Masukkan link dulu.'); return false; }
+  setBusy(true);
+  msg('Mengambil teks dan gambar dari link...');
+  try{
+    const info = extract(await getHtml(u), u);
+    if(!info.paras.length) throw new Error('isi artikel tidak ditemukan');
+    $('manual').value = info.paras.join('\n\n');
+    $('title').value = info.title;
+    $('manual').parentElement.open = true;
+    fetchedFrom = u;
+    msg('Mengunduh gambar artikel...');
+    fetchedImgs = (await Promise.all(info.imgs.map(loadImg))).filter(Boolean);
+    msg(`Teks terisi (${info.paras.length} paragraf) dan ${fetchedImgs.length} gambar. Periksa teksnya, lalu klik Buat Video Otomatis.`);
+    return true;
+  }catch(e){
+    msg('Gagal mengambil dari link (' + e.message + '). Tempel teks manual di bawah.');
+    $('manual').parentElement.open = true;
+    return false;
+  }finally{
+    setBusy(false);
+  }
+}
+
+// Format 40 detik: Hook (0–3), Inti (4–10), Fakta (11–25), Dampak (26–35), Penutup (36–40).
+async function buildFixed40(sents, title, imgs){
+  const HOOK = 'Pemirsa, ada informasi penting yang perlu Anda ketahui!';
+  const OUTRO = 'Ikuti terus informasi terbaru hanya di channel kami.';
+  const used = new Set([0]);
+  const clip = (text, max) => {
+    if(text.length <= max) return text;
+    const cut = text.slice(0, max);
+    const sp = cut.lastIndexOf(' ');
+    return cut.slice(0, sp > 0 ? sp : max).replace(/[,;:\s]+$/, '') + '.';
+  };
+
+  const inti = clip(sents[0], 200);
+
+  const factList = [];
+  let len = 0;
+  for(let i = 1; i < sents.length && factList.length < 3; i++){
+    if(len + sents[i].length > 300) break;
+    factList.push(sents[i]);
+    used.add(i);
+    len += sents[i].length;
+  }
+  if(!factList.length && sents[1]){ factList.push(clip(sents[1], 200)); used.add(1); }
+  const fakta = factList.join(' ') || inti;
+
+  const KW = /warga|masyarakat|pengguna|konsumen|pelanggan|pekerja|karyawan|guru|siswa|pengemudi|terdampak|dampak|diminta|wajib|harus|perlu|pemerintah/i;
+  let dIdx = sents.findIndex((s, i) => !used.has(i) && KW.test(s));
+  if(dIdx < 0) dIdx = sents.findIndex((s, i) => !used.has(i));
+  const dampak = clip(dIdx >= 0 ? sents[dIdx] : inti, 200);
+
+  const pick = (k, q) => imgs[k] ? Promise.resolve(imgs[k]) : webImage(keywords(q));
+  const [cover, img1, img2, img3] = await Promise.all([
+    pick(0, title), pick(1, inti), pick(2, fakta), pick(3, dampak)
+  ]);
+
+  slides = [
+    { kind: 'title', label: '0–3 DETIK • HOOK', head: HOOK, say: HOOK, win: 4, img: cover || null },
+    { kind: 'point', label: '4–10 DETIK • INTI', head: inti, say: inti, win: 7, img: img1 || null },
+    { kind: 'point', label: '11–25 DETIK • FAKTA', head: fakta, say: fakta, win: 15, img: img2 || null },
+    { kind: 'point', label: '26–35 DETIK • DAMPAK', head: dampak, say: dampak, win: 10, img: img3 || null },
+    { kind: 'outro', label: '36–40 DETIK • PENUTUP', head: OUTRO, say: OUTRO, win: 4, img: null }
+  ];
+}
+
+async function autoMake(){
+  const u = $('url').value.trim();
+  let manual = $('manual').value.trim();
+  if(!u && !manual){ msg('Masukkan link atau tempel teks dulu.'); return; }
+  setBusy(true);
+  try{
+    if(!manual){
+      const ok = await fetchFromLink();
+      if(!ok){ setBusy(false); return; }
+      manual = $('manual').value.trim();
+    }
+    const fromLink = !!u && fetchedFrom === u;
+    title = $('title').value.trim() || manual.split(/[.!?]/)[0].slice(0, 80) || 'Berita';
+    sourceName = fromLink ? hostOf(u) : '';
+    const paras = [manual];
+    const imgs = fromLink ? fetchedImgs : [];
+    msg('Menyusun naskah...');
+
+    const sents = (paras.join(' ').match(/[^.!?]+[.!?]+/g) || [])
+      .map(s => s.trim()).filter(s => s.length > 30);
+    if(!sents.length) throw new Error('teks terlalu pendek');
+
+    if($('format').value === 'fixed40'){
+      msg('Menyusun format 40 detik...');
+      await buildFixed40(sents, title, imgs);
+      $('ttl').textContent = title;
+      renderList();
+      msg(`Siap: format 40 detik, ${slides.length} segmen. Pratinjau atau rekam untuk membuat videonya.`);
+      drawSlide(0, 0, 1, -1);
+      setBusy(false);
+      return;
+    }
+
+    const n = Math.min(Math.max(+$('count').value || 4, 2), sents.length);
+    const step = sents.length / n;
+    const picks = Array.from({ length: n }, (_, i) => sents[Math.floor(i * step)]);
+
+    msg('Mencari gambar dari web...');
+    const coverImg = imgs[0] || await webImage(keywords(title));
+    const webImgs = await Promise.all(picks.map(s => webImage(keywords(s))));
+
+    slides = [{
+      kind: 'title', label: 'BERITA UTAMA', head: title,
+      say: `Selamat datang di ${brandName()}. Berikut laporan berita terkini. ${title}.`,
+      img: coverImg || null
+    }];
+    picks.forEach((s, i) => slides.push({
+      kind: 'point', label: 'POIN ' + (i + 1), head: s, say: s,
+      img: imgs[i + 1] || webImgs[i] || null
+    }));
+    slides.push({
+      kind: 'outro', label: 'PENUTUP', head: 'Ikuti untuk berita terbaru',
+      say: 'Demikian berita hari ini. Terima kasih telah menyimak. Sampai jumpa di berita berikutnya.',
+      img: null
+    });
+
+    $('ttl').textContent = title;
+    renderList();
+
+    msg(`Siap: ${slides.length} slide, ${imgs.length + (coverImg ? 1 : 0)} gambar.`);
+    drawSlide(0, 0, 1, -1);
+  }catch(e){
+    msg('Gagal: ' + e.message + '. Coba tempel teks manual di bagian bawah.');
+    $('manual').parentElement.open = true;
+  }
+  setBusy(false);
+}
+
+/* ---------- Gambar slide (format 9:16) ---------- */
+
+function rr(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function wrap(text, maxW){
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  for(const w of words){
+    const test = line ? line + ' ' + w : w;
+    if(ctx.measureText(test).width > maxW && line){
+      lines.push(line);
+      line = w;
+    } else {
+      line = test;
+    }
+  }
+  if(line) lines.push(line);
+  return lines;
+}
+
+// Teks narasi: kata yang sudah dibacakan berwarna kuning.
+function drawCaption(text, y, lineH, maxW, font, hl){
+  ctx.font = font;
+  const lines = wrap(text, maxW);
+  const boxH = lines.length * lineH + 50;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  rr(60, y - 70, W - 120, boxH, 24);
+  ctx.fill();
+  let off = 0, yy = y;
+  for(const line of lines){
+    const spoken = Math.max(0, Math.min(line.length, hl - off));
+    let x = 100;
+    if(spoken > 0){
+      const pre = line.slice(0, spoken);
+      ctx.fillStyle = '#facc15';
+      ctx.fillText(pre, x, yy);
+      x += ctx.measureText(pre).width;
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(line.slice(spoken), x, yy);
+    yy += lineH;
+    off += line.length + 1;
+  }
+}
+
+function drawSlide(idx, q, alpha, hl){
+  const s = slides[idx];
+  if(!s) return;
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.globalAlpha = alpha;
+
+  // Latar: gambar dengan efek zoom perlahan, atau gradasi.
+  if(s.img && s.img.naturalWidth){
+    const iw = s.img.naturalWidth, ih = s.img.naturalHeight;
+    const base = Math.max(W / iw, H / ih) * (1 + 0.08 * q);
+    const w = iw * base, h = ih * base;
+    ctx.drawImage(s.img, (W - w) / 2, (H - h) / 2, w, h);
+  } else {
+    const g = ctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, '#1e1b4b');
+    g.addColorStop(0.5, '#312e81');
+    g.addColorStop(1, '#0f172a');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Lapisan gelap agar teks terbaca.
+  const og = ctx.createLinearGradient(0, 0, 0, H);
+  og.addColorStop(0, 'rgba(0,0,0,0.35)');
+  og.addColorStop(0.45, 'rgba(0,0,0,0.25)');
+  og.addColorStop(0.75, 'rgba(0,0,0,0.85)');
+  ctx.fillStyle = og;
+  ctx.fillRect(0, 0, W, H);
+
+  // Bilah progres di atas.
+  const segW = (W - 120) / slides.length;
+  slides.forEach((_, i) => {
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillRect(60 + i * segW + 4, 50, segW - 8, 8);
+  });
+  ctx.fillStyle = '#facc15';
+  const filled = (idx + q) / slides.length;
+  ctx.fillRect(60, 50, (W - 120) * filled, 8);
+
+  // Nama channel di atas (aman dari UI Reels/Shorts).
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 44px system-ui, sans-serif';
+  ctx.fillText(brandName().toUpperCase(), 60, 160);
+
+  // Label bagian.
+  ctx.font = 'bold 36px system-ui, sans-serif';
+  const lw = ctx.measureText(s.label).width + 40;
+  ctx.fillStyle = '#facc15';
+  rr(60, 1000, lw, 62, 12);
+  ctx.fill();
+  ctx.fillStyle = '#0f172a';
+  ctx.fillText(s.label, 80, 1043);
+
+  if(s.kind === 'title'){
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 92px system-ui, sans-serif';
+    const lines = wrap(s.head, 900);
+    let y = 760 - ((lines.length - 1) * 108) / 2;
+    lines.forEach(l => { ctx.fillText(l, 90, y); y += 108; });
+    if(sourceName){
+      ctx.font = '500 36px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText('Sumber: ' + sourceName, 90, y + 40);
+    }
+  } else if(s.kind === 'outro'){
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 84px system-ui, sans-serif';
+    const lines = wrap(s.head, 900);
+    let y = 1200;
+    lines.forEach(l => { ctx.fillText(l, 90, y); y += 100; });
+    ctx.font = '500 40px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText('Simpan & bagikan video ini', 90, y + 30);
+  } else {
+    drawCaption(s.say, 1150, 84, 880, 'bold 62px system-ui, sans-serif', hl);
+  }
+
+  ctx.restore();
+}
+
+function drawEmpty(){
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, '#1e1b4b');
+  g.addColorStop(1, '#0f172a');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 56px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Tempel link berita', W / 2, H / 2);
+  ctx.textAlign = 'left';
+}
+
+/* ---------- Musik latar (dibuat browser, bebas hak cipta) ---------- */
+
+const MUSIC_STYLES = {
+  energik: { chords: [[261.63, 329.63, 392], [196, 246.94, 293.66], [220, 261.63, 329.63], [174.61, 220, 261.63]],
+             cutoff: 2500, step: 117, chordMs: 2000, kickEvery: 4, snare: true, hat: true, arpGain: 0.35 },
+  berita:  { chords: [[146.83, 174.61, 220], [116.54, 146.83, 174.61], [174.61, 220, 261.63], [130.81, 164.81, 196]],
+             cutoff: 1200, step: 240, chordMs: 4000, kickEvery: 8, snare: false, hat: false, arpGain: 0.18 },
+  santai:  { chords: [[220, 261.63, 329.63], [174.61, 220, 261.63], [196, 246.94, 293.66], [164.81, 196, 246.94]],
+             cutoff: 900, step: 300, chordMs: 5000, kickEvery: 0, snare: false, hat: false, arpGain: 0.12 }
+};
+let CHORDS = MUSIC_STYLES.energik.chords;
+let actx = null, musicGain = null, musicNodes = [], chordTimer = null, arpTimer = null, chordIdx = 0, arpIdx = 0;
+
+function ensureAudio(){
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if(!actx && Ctx) actx = new Ctx();
+  if(actx && actx.state === 'suspended') actx.resume();
+}
+
+function startMusic(){
+  ensureAudio();
+  if(!actx) return;
+  const t = actx.currentTime;
+  musicGain = actx.createGain();
+  musicGain.gain.setValueAtTime(0, t);
+  musicGain.gain.linearRampToValueAtTime(0.08, t + 2);
+  const filter = actx.createBiquadFilter();
+  filter.type = 'lowpass';
+  const st = MUSIC_STYLES[$('musicStyle').value] || MUSIC_STYLES.energik;
+  CHORDS = st.chords;
+  filter.frequency.value = st.cutoff;
+  filter.connect(musicGain);
+  musicGain.connect(actx.destination);
+
+  musicNodes = [];
+  for(let v = 0; v < 3; v++){
+    const o = actx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.value = CHORDS[0][v];
+    o.connect(filter);
+    o.start();
+    musicNodes.push(o);
+  }
+  const bass = actx.createOscillator();
+  bass.type = 'sine';
+  bass.frequency.value = CHORDS[0][0] / 2;
+  bass.connect(filter);
+  bass.start();
+  musicNodes.push(bass);
+
+  chordIdx = 0;
+  arpIdx = 0;
+  chordTimer = setInterval(() => {
+    chordIdx = (chordIdx + 1) % CHORDS.length;
+    const c = CHORDS[chordIdx], now = actx.currentTime;
+    for(let v = 0; v < 3; v++) musicNodes[v].frequency.setTargetAtTime(c[v], now, 0.4);
+    musicNodes[3].frequency.setTargetAtTime(c[0] / 2, now, 0.4);
+  }, st.chordMs);
+  // Pola 16 langkah (~128 BPM): arpeggio, kick, snare, hi-hat.
+  const noiseBuf = actx.createBuffer(1, Math.floor(actx.sampleRate * 0.1), actx.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for(let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const playNoise = (when, hpFreq, bpFreq, gainVal, dur) => {
+    const src = actx.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = actx.createBiquadFilter();
+    f.type = bpFreq ? 'bandpass' : 'highpass';
+    f.frequency.value = bpFreq || hpFreq;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(gainVal, when);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    src.connect(f);
+    f.connect(g);
+    g.connect(musicGain);
+    src.start(when);
+    src.stop(when + dur + 0.02);
+  };
+  let step = 0;
+  arpTimer = setInterval(() => {
+    if(!musicGain) return;
+    const now = actx.currentTime + 0.02;
+    const s = step % 16;
+    step++;
+
+    // Arpeggio pluck tiap 16th
+    const note = CHORDS[chordIdx][[0, 1, 2, 1][s % 4]] * 2;
+    const o = actx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.value = note;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(st.arpGain, now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+    o.connect(g);
+    g.connect(filter);
+    o.start(now);
+    o.stop(now + 0.25);
+
+    // Kick di tiap ketukan (1, 2, 3, 4)
+    if(st.kickEvery && s % st.kickEvery === 0){
+      const k = actx.createOscillator();
+      k.type = 'sine';
+      k.frequency.setValueAtTime(150, now);
+      k.frequency.exponentialRampToValueAtTime(45, now + 0.25);
+      const kg = actx.createGain();
+      kg.gain.setValueAtTime(0.9, now);
+      kg.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+      k.connect(kg);
+      kg.connect(musicGain);
+      k.start(now);
+      k.stop(now + 0.32);
+    }
+
+    // Snare di ketukan 2 dan 4
+    if(st.snare && (s === 4 || s === 12)) playNoise(now, 0, 1800, 0.3, 0.14);
+
+    // Hi-hat di setiap offbeat
+    if(st.hat && s % 2 === 1) playNoise(now, 7000, 0, 0.12, 0.05);
+  }, st.step);
+}
+
+function setMusic(level){
+  if(actx && musicGain) musicGain.gain.setTargetAtTime(level, actx.currentTime, 0.3);
+}
+
+function stopMusic(){
+  if(!actx || !musicGain) return;
+  clearInterval(chordTimer);
+  clearInterval(arpTimer);
+  const t = actx.currentTime;
+  musicGain.gain.cancelScheduledValues(t);
+  musicGain.gain.setValueAtTime(musicGain.gain.value, t);
+  musicGain.gain.linearRampToValueAtTime(0, t + 2);
+  const nodes = musicNodes;
+  musicGain = null;
+  musicNodes = [];
+  setTimeout(() => nodes.forEach(o => { try{ o.stop(); }catch(e){} }), 2200);
+}
+
+/* ---------- Pemutaran dan rekaman ---------- */
+
+function pickVoice(){
+  const v = speechSynthesis.getVoices();
+  return v.find(x => /^id[-_]/i.test(x.lang)) || null;
+}
+
+function loop(){
+  if(!playing) return;
+  const s = slides[curIdx];
+  const el = performance.now() - slideStart;
+  if(s && !boundaryHit) capIdx = Math.min(s.say.length, Math.floor(el * 0.012));
+  const q = Math.min(1, el / 9000);
+  if(el < 600 && curIdx > 0){
+    drawSlide(curIdx - 1, 1, 1, -1);
+    drawSlide(curIdx, q, Math.min(1, el / 600), capIdx);
+  } else {
+    drawSlide(curIdx, q, 1, capIdx);
+  }
+  rafId = requestAnimationFrame(loop);
+}
+
+function say(i){
+  if(!playing) return;
+  if(i >= slides.length){
+    stopMusic();
+    setTimeout(() => { if(playing) finish(); }, 2200);
+    return;
+  }
+  curIdx = i;
+  slideStart = performance.now();
+  capIdx = 0;
+  boundaryHit = false;
+  const s = slides[i];
+  let done = false;
+  let winTimer = 0;
+  const next = () => {
+    if(done || !playing) return;
+    done = true;
+    clearTimeout(winTimer);
+    setMusic(0.08);
+    setTimeout(() => say(i + 1), s.win ? 0 : 500);
+  };
+  const u = new SpeechSynthesisUtterance(s.say);
+  u.lang = 'id-ID';
+  u.rate = s.win ? Math.min(1.5, Math.max(0.9, (s.say.length / 14) / s.win)) : 0.95;
+  u.pitch = 0.95;
+  const v = pickVoice();
+  if(v) u.voice = v;
+  u.onboundary = e => {
+    if(e.name && e.name !== 'word') return;
+    boundaryHit = true;
+    const sp = s.say.indexOf(' ', e.charIndex);
+    capIdx = sp < 0 ? s.say.length : sp;
+  };
+  if(!s.win) u.onend = next;
+  u.onerror = s.win ? null : next;
+  setMusic(0.015);
+  speechSynthesis.speak(u);
+  if(s.win){
+    winTimer = setTimeout(() => { speechSynthesis.cancel(); next(); }, s.win * 1000);
+  } else {
+    setTimeout(() => { if(!done && !speechSynthesis.speaking) next(); }, 1200);
+  }
+}
+
+async function startPlayback(record){
+  if(!slides.length || playing) return;
+  const musicOn = $('musicStyle').value !== 'none';
+  if(musicOn) ensureAudio();
+  if(record){
+    try{
+      displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, preferCurrentTab: true });
+    }catch(e){
+      msg('Rekaman dibatalkan.');
+      return;
+    }
+    const aud = displayStream.getAudioTracks();
+    if(!aud.length) msg('Peringatan: audio tab tidak dibagikan, video akan tanpa suara.');
+    const stream = new MediaStream([...cv.captureStream(30).getVideoTracks(), ...aud]);
+    const types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+    const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+    recExt = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+    chunks = [];
+    recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8000000, audioBitsPerSecond: 192000 });
+    recorder.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(chunks, { type: mime.split(';')[0] }));
+      a.download = 'video-berita.' + recExt;
+      a.click();
+      if(displayStream) displayStream.getTracks().forEach(t => t.stop());
+      displayStream = null;
+      recorder = null;
+      msg('Video selesai diunduh (' + recExt.toUpperCase() + ', 1080×1920).');
+      setBusy(false);
+    };
+    displayStream.getVideoTracks()[0].onended = () => stopPlayback();
+    recorder.start(1000);
+  }
+  playing = true;
+  setBusy(true);
+  speechSynthesis.cancel();
+  if(musicOn) startMusic();
+  rafId = requestAnimationFrame(loop);
+  msg(record ? 'Merekam...' : 'Memutar pratinjau...');
+  say(0);
+}
+
+function finish(){
+  playing = false;
+  cancelAnimationFrame(rafId);
+  drawSlide(slides.length - 1, 1, 1, -1);
+  if(recorder && recorder.state !== 'inactive'){
+    recorder.stop();
+  } else {
+    msg('Pratinjau selesai.');
+    setBusy(false);
+  }
+}
+
+function stopPlayback(){
+  speechSynthesis.cancel();
+  stopMusic();
+  if(!playing && !recorder){ setBusy(false); return; }
+  playing = false;
+  cancelAnimationFrame(rafId);
+  if(recorder && recorder.state !== 'inactive'){
+    recorder.stop();
+  } else {
+    msg('Dihentikan.');
+    setBusy(false);
+  }
+}
+
+/* ---------- Ganti / hapus gambar per slide ---------- */
+
+let pendingSlide = -1;
+
+function refreshPreview(){
+  if(!playing && slides.length) drawSlide(curIdx, 0, 1, -1);
+}
+
+function renderList(){
+  const ol = $('scriptList');
+  ol.innerHTML = '';
+  const btnStyle = 'margin:4px 6px 0 0;padding:6px 10px;font-size:13px';
+  slides.forEach((s, i) => {
+    const li = document.createElement('li');
+    li.style.marginBottom = '10px';
+    const txt = document.createElement('div');
+    txt.textContent = s.say;
+
+    const row = document.createElement('div');
+    const bFile = document.createElement('button');
+    bFile.textContent = 'Ganti dari file';
+    bFile.style.cssText = btnStyle;
+    bFile.onclick = () => { pendingSlide = i; $('imgFile').click(); };
+
+    const bLink = document.createElement('button');
+    bLink.textContent = 'Ganti dari link';
+    bLink.style.cssText = btnStyle;
+    bLink.onclick = () => {
+      const u = prompt('Tempel link gambar (https://...)');
+      if(u && u.trim()) setSlideImage(i, u.trim());
+    };
+
+    const bDel = document.createElement('button');
+    bDel.textContent = 'Hapus gambar';
+    bDel.style.cssText = btnStyle + ';background:#6b7280';
+    bDel.onclick = () => {
+      slides[i].img = null;
+      msg(`Gambar slide ${i + 1} dihapus.`);
+      renderList();
+      refreshPreview();
+    };
+
+    row.append(bFile, bLink, bDel);
+    li.append(txt, row);
+    ol.appendChild(li);
+  });
+}
+
+async function setSlideImage(i, src){
+  msg('Memuat gambar...');
+  const img = await loadImg(src);
+  if(!img){
+    msg('Gambar tidak bisa dimuat. Coba link lain atau pilih file.');
+    return;
+  }
+  slides[i].img = img;
+  msg(`Gambar slide ${i + 1} diganti.`);
+  renderList();
+  refreshPreview();
+}
+
+$('imgFile').onchange = e => {
+  const f = e.target.files[0];
+  if(f && pendingSlide >= 0) setSlideImage(pendingSlide, URL.createObjectURL(f));
+  e.target.value = '';
+  pendingSlide = -1;
+};
+
+$('fetchBtn').onclick = fetchFromLink;
+$('autoBtn').onclick = autoMake;
+$('playBtn').onclick = () => startPlayback(false);
+$('recBtn').onclick = () => startPlayback(true);
+$('stopBtn').onclick = stopPlayback;
+drawEmpty();
+</script>
+</body>
+</html>
