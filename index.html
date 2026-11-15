@@ -169,6 +169,38 @@ let slides = [], title = '', sourceName = '', playing = false;
 let fetchedImgs = [], fetchedFrom = '';
 let lastBlob = null, lastName = '';
 
+// Periksa apakah rekaman benar-benar berisi suara, lalu beri tahu pengguna.
+async function audioPeak(blob){
+  try{
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const c = new Ctx();
+    const buf = await c.decodeAudioData(await blob.arrayBuffer());
+    c.close();
+    let peak = 0;
+    for(let ch = 0; ch < buf.numberOfChannels; ch++){
+      const d = buf.getChannelData(ch);
+      for(let i = 0; i < d.length; i += 50){
+        const a = Math.abs(d[i]);
+        if(a > peak) peak = a;
+      }
+    }
+    return peak;
+  }catch(e){ return null; }
+}
+
+async function reportResult(blob, ext){
+  const peak = await audioPeak(blob);
+  if(peak === null){
+    msg('Video selesai diunduh. Suara tidak bisa diperiksa otomatis di browser ini.');
+  } else if(peak < 0.005){
+    msg('PERINGATAN: video tidak berisi suara narasi. Ulangi dan centang "Bagikan audio tab" saat berbagi layar.');
+  } else if(ext === 'webm'){
+    msg('Video berisi suara, tetapi format WebM. Untuk Facebook sebaiknya konversi ke MP4 (lihat README).');
+  } else {
+    msg('Video selesai diunduh dan berisi suara narasi (MP4).');
+  }
+}
+
 function downloadBlob(blob, name){
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -925,7 +957,7 @@ async function startPlayback(record, reuse){
       if(displayStream) displayStream.getTracks().forEach(t => t.stop());
       displayStream = null;
       recorder = null;
-      msg('Video selesai diunduh (' + recExt.toUpperCase() + ', 1080×1920).');
+      reportResult(lastBlob, recExt);
       setBusy(false);
     };
     displayStream.getVideoTracks()[0].onended = () => stopPlayback();
