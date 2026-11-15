@@ -444,11 +444,6 @@ function drawSlide(idx, q, alpha, hl){
     const lines = wrap(s.head, 900);
     let y = 760 - ((lines.length - 1) * 108) / 2;
     lines.forEach(l => { ctx.fillText(l, 90, y); y += 108; });
-    if(sourceName){
-      ctx.font = '500 36px system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.fillText('Sumber: ' + sourceName, 90, y + 40);
-    }
   } else if(s.kind === 'outro'){
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 84px system-ui, sans-serif';
