@@ -246,10 +246,8 @@ async function buildFixed40(sents, title, imgs){
   if(dIdx < 0) dIdx = sents.findIndex((s, i) => !used.has(i));
   const dampak = clip(dIdx >= 0 ? sents[dIdx] : inti, 200);
 
-  const pick = (k, q) => imgs[k] ? Promise.resolve(imgs[k]) : webImage(keywords(q));
-  const [cover, img1, img2, img3] = await Promise.all([
-    pick(0, title), pick(1, inti), pick(2, fakta), pick(3, dampak)
-  ]);
+  const thumb = imgs[0] || await webImage(keywords(title));
+  const cover = thumb, img1 = thumb, img2 = thumb, img3 = thumb;
 
   slides = [
     { kind: 'title', label: '0–3 DETIK • HOOK', head: HOOK, say: HOOK, win: 4, img: cover || null },
@@ -299,7 +297,7 @@ async function autoMake(){
 
     msg('Mencari gambar dari web...');
     const coverImg = imgs[0] || await webImage(keywords(title));
-    const webImgs = await Promise.all(picks.map(s => webImage(keywords(s))));
+    const webImgs = [];
 
     slides = [{
       kind: 'title', label: 'BERITA UTAMA', head: title,
@@ -316,6 +314,7 @@ async function autoMake(){
       img: null
     });
 
+    applyThumbnail();
     $('ttl').textContent = title;
     renderList();
 
@@ -750,6 +749,12 @@ function stopPlayback(){
 /* ---------- Ganti / hapus gambar per slide ---------- */
 
 let pendingSlide = -1;
+
+// Hanya satu gambar (thumbnail) yang dipakai untuk seluruh video.
+function applyThumbnail(){
+  const t = slides[0]?.img || null;
+  slides.forEach(s => { s.img = t; });
+}
 
 function refreshPreview(){
   if(!playing && slides.length) drawSlide(curIdx, 0, 1, -1);
