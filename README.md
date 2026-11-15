@@ -8,8 +8,8 @@ dan musik latar dibuat langsung oleh browser sehingga bebas hak cipta.
 
 - Ambil judul, paragraf, dan gambar dari link berita (tombol **Ambil Isi dari Link**)
 - Kotak teks terisi otomatis dan bisa diedit sebelum video dibuat
-- Tambah gambar dari Wikimedia Commons jika artikel kurang gambar
-- Ganti atau hapus gambar tiap slide (dari file atau link)
+- Satu gambar thumbnail artikel dipakai sebagai latar seluruh video (jika tidak ada, dicari di Wikimedia Commons)
+- Ganti atau hapus gambar tiap slide jika ingin memakai gambar lain (dari file atau link)
 - Dua format: **bebas** (jumlah poin fleksibel) atau **40 detik** (Hook, Inti, Fakta, Dampak, Penutup)
 - Narasi dengan teks yang menyorot kata yang sedang dibacakan
 - Pilihan musik latar: Energik, Berita (serius), Santai (ambient), atau tanpa musik
