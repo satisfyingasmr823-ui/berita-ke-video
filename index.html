@@ -121,8 +121,16 @@
       <select id="musicStyle">
         <option value="energik" selected>Energik</option>
         <option value="berita">Berita (serius)</option>
+        <option value="bola">Bola (stadion)</option>
         <option value="santai">Santai (ambient)</option>
         <option value="none">Tanpa musik</option>
+      </select>
+    </div>
+    <div>
+      <label class="field" for="voice">Suara pembaca</label>
+      <select id="voice">
+        <option value="female" selected>Wanita</option>
+        <option value="male">Pria</option>
       </select>
     </div>
   </div>
@@ -569,6 +577,8 @@ const MUSIC_STYLES = {
              cutoff: 2500, step: 117, chordMs: 2000, kickEvery: 4, snare: true, hat: true, arpGain: 0.35 },
   berita:  { chords: [[146.83, 174.61, 220], [116.54, 146.83, 174.61], [174.61, 220, 261.63], [130.81, 164.81, 196]],
              cutoff: 1200, step: 240, chordMs: 4000, kickEvery: 8, snare: false, hat: false, arpGain: 0.18 },
+  bola:    { chords: [[261.63, 329.63, 392], [349.23, 440, 523.25], [196, 246.94, 293.66], [392, 493.88, 587.33]],
+             cutoff: 3000, step: 107, chordMs: 1000, kickEvery: 4, snare: true, hat: true, arpGain: 0.4 },
   santai:  { chords: [[220, 261.63, 329.63], [174.61, 220, 261.63], [196, 246.94, 293.66], [164.81, 196, 246.94]],
              cutoff: 900, step: 300, chordMs: 5000, kickEvery: 0, snare: false, hat: false, arpGain: 0.12 }
 };
@@ -703,10 +713,48 @@ function stopMusic(){
 
 /* ---------- Pemutaran dan rekaman ---------- */
 
-function pickVoice(){
-  const v = speechSynthesis.getVoices();
-  return v.find(x => /^id[-_]/i.test(x.lang)) || null;
+const MALE_RE = /andika|ardi|pria|male|david|\bman\b/i;
+const FEMALE_RE = /gadis|damayanti|wanita|female|woman/i;
+
+function idVoices(){
+  return speechSynthesis.getVoices().filter(x => /^id[-_]/i.test(x.lang));
 }
+
+// Isi menu suara: pilihan Pria/Wanita, lalu suara bahasa Indonesia yang terpasang.
+function fillVoices(){
+  const sel = $('voice');
+  const current = sel.value;
+  const list = idVoices();
+  sel.innerHTML = '';
+  const add = (value, text) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = text;
+    sel.appendChild(o);
+  };
+  add('female', 'Wanita (otomatis)');
+  add('male', 'Pria (otomatis)');
+  list.forEach(v => add('name:' + v.name, v.name));
+  if(!list.length) add('none', 'Suara Indonesia tidak terpasang (suara default)');
+  sel.value = [...sel.options].some(o => o.value === current) ? current : 'female';
+}
+
+function pickVoice(){
+  const list = idVoices();
+  if(!list.length) return null;
+  const sel = $('voice').value;
+  if(sel.startsWith('name:')){
+    const name = sel.slice(5);
+    return list.find(v => v.name === name) || list[0];
+  }
+  if(sel === 'male'){
+    return list.find(v => MALE_RE.test(v.name)) || list.find(v => !FEMALE_RE.test(v.name)) || list[0];
+  }
+  return list.find(v => FEMALE_RE.test(v.name)) || list.find(v => !MALE_RE.test(v.name)) || list[0];
+}
+
+fillVoices();
+if('onvoiceschanged' in speechSynthesis) speechSynthesis.onvoiceschanged = fillVoices;
 
 function loop(){
   if(!playing) return;
